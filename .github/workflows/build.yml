@@ -22,9 +22,27 @@ env:
   DOCKER_BUILDKIT: 1
 
 jobs:
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-config: .github/buildkit.toml
+      - name: Login to Docker
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
   pre_check:
     name: Pre Checks
     if: ${{ github.event.inputs.buildOnly != 'true' }}
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - name: Repo Check
@@ -38,25 +56,18 @@ jobs:
           exit 0
 
   build_base:
-    name: Build base image
+    name: Build Base Image
     if: ${{ github.event.inputs.buildOnly != 'true' }}
     needs: pre_check
     runs-on: ubuntu-latest
     steps:
       - name: Free Disk-Space
-        run: df -h && sudo apt-get clean && docker system prune -a -f && sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc && df -h
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          buildkitd-config: .github/buildkit.toml
-      - name: Login to Docker
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
+        run: |
+          df -h
+          sudo apt-get clean
+          docker system prune -a -f
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h
       - name: Image Name
         id: imagename
         run: |
@@ -65,21 +76,21 @@ jobs:
           echo "rawname=${IMG/ /-}" >> $GITHUB_OUTPUT
       - name: Stop Commands
         run: T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
-      - name: Build target base image
+      - name: Build and Push Base Image
         uses: docker/build-push-action@v5
         with:
           context: images/base
-          pull: true
+          pull: false  # Avoid pulling unless needed
           push: true
           provenance: false
           tags: ${{ steps.imagename.outputs.name }}:latest
           cache-to: type=registry,mode=max,ref=${{ steps.imagename.outputs.name }}:cache
           cache-from: type=registry,ref=${{ steps.imagename.outputs.name }}:cache
-      - name: Get download cache key
+      - name: Get Download Cache Key
         id: dl_cache
         run: |
           echo "dltagname=$(./util/get_dl_cache_tag.sh)" >> $GITHUB_OUTPUT
-      - name: Cache
+      - name: Cache Downloads
         uses: actions/cache@v4
         with:
           path: .cache/downloads
@@ -103,7 +114,7 @@ jobs:
           untagged_only: true
 
   build_target_bases:
-    name: Build target base image
+    name: Build Target Base Images
     if: ${{ github.event.inputs.buildOnly != 'true' }}
     needs: build_base
     runs-on: ubuntu-latest
@@ -113,19 +124,12 @@ jobs:
         target: [win64,win32]
     steps:
       - name: Free Disk-Space
-        run: df -h && sudo apt-get clean && docker system prune -a -f && sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc && df -h
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          buildkitd-config: .github/buildkit.toml
-      - name: Login to Docker
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
+        run: |
+          df -h
+          sudo apt-get clean
+          docker system prune -a -f
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h
       - name: Image Name
         id: imagename
         run: |
@@ -135,11 +139,11 @@ jobs:
           echo "gh_repo=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
       - name: Stop Commands
         run: T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
-      - name: Build target base image
+      - name: Build and Push Target Base Image
         uses: docker/build-push-action@v5
         with:
           context: images/base-${{ matrix.target }}
-          pull: true
+          pull: false  # Avoid pulling unless needed
           push: true
           provenance: false
           tags: ${{ steps.imagename.outputs.name }}:latest
@@ -159,7 +163,7 @@ jobs:
           untagged_only: true
 
   build_targets:
-    name: Build target-variant image
+    name: Build Target-Variant Images
     if: ${{ github.event.inputs.buildOnly != 'true' }}
     needs: build_target_bases
     runs-on: ubuntu-latest
@@ -167,29 +171,22 @@ jobs:
       fail-fast: false
       matrix:
         target: [win64,win32]
-        variant: [gpl 7.0]
+        variant: [gpl-shared 7.0]
     steps:
       - name: Free Disk-Space
-        run: df -h && sudo apt-get clean && docker system prune -a -f && sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc && df -h
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          buildkitd-config: .github/buildkit.toml
-      - name: Login to Docker
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
+        run: |
+          df -h
+          sudo apt-get clean
+          docker system prune -a -f
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h
       - name: Image Name
         id: imagename
         run: |
           IMG="${GITHUB_REPOSITORY,,}/${{ matrix.target }}-${{ matrix.variant }}"
           echo "name=ghcr.io/${IMG/ /-}" >> $GITHUB_OUTPUT
           echo "rawname=${IMG/ /-}" >> $GITHUB_OUTPUT
-      - name: Get download cache key
+      - name: Get Download Cache Key
         id: dl_cache
         run: |
           echo "dltagname=$(./util/get_dl_cache_tag.sh)" >> $GITHUB_OUTPUT
@@ -197,17 +194,17 @@ jobs:
         run: T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
       - name: Generate Dockerfile
         run: ./generate.sh ${{ matrix.target }} ${{ matrix.variant }}
-      - name: Cache
-        uses: actions/cache/restore@v4
+      - name: Restore Download Cache
+        uses: actions/cache@v4
         with:
           path: .cache/downloads
           key: download-cache-${{ steps.dl_cache.outputs.dltagname }}
           fail-on-cache-miss: true
-      - name: Build target base image
+      - name: Build and Push Target-Variant Image
         uses: docker/build-push-action@v5
         with:
           context: .
-          pull: true
+          pull: false  # Avoid pulling unless needed
           push: true
           provenance: false
           tags: ${{ steps.imagename.outputs.name }}:latest
@@ -225,7 +222,7 @@ jobs:
           untagged_only: true
 
   build_ffmpeg:
-    name: Build ffmpeg
+    name: Build FFmpeg
     if: ${{ ( github.event.inputs.buildOnly == 'true' && !cancelled() ) || success() }}
     needs: build_targets
     runs-on: ubuntu-latest
@@ -233,10 +230,15 @@ jobs:
       fail-fast: false
       matrix:
         target: [win64,win32]
-        variant: [gpl 7.0]
+        variant: [gpl-shared 7.0]
     steps:
       - name: Free Disk-Space
-        run: df -h && sudo apt-get clean && docker system prune -a -f && sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc && df -h
+        run: |
+          df -h
+          sudo apt-get clean
+          docker system prune -a -f
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h
       - name: Checkout
         uses: actions/checkout@v4
       - name: Login to Docker
@@ -245,16 +247,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Build ffmpeg
+      - name: Build FFmpeg
         run: |
           T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
           ./build.sh ${{ matrix.target }} ${{ matrix.variant }}
-      - name: Replace spaces in string
+      - name: Replace Spaces in String
         id: strs
         run: |
           SLUG="${{ matrix.target }}-${{ matrix.variant }}"
           echo "artifact_slug=${SLUG// /-}" >> $GITHUB_OUTPUT
-      - name: Upload artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-${{ steps.strs.outputs.artifact_slug }}
@@ -262,22 +264,27 @@ jobs:
           path: artifacts/*
 
   publish_release:
-    name: Publish release
+    name: Publish Release
     if: ${{ !cancelled() && github.event.inputs.doRelease == 'true' && needs.build_ffmpeg.result == 'success' }}
     needs: build_ffmpeg
     runs-on: ubuntu-latest
     steps:
       - name: Free Disk-Space
-        run: df -h && sudo apt-get clean && docker system prune -a -f && sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc && df -h
+        run: |
+          df -h
+          sudo apt-get clean
+          docker system prune -a -f
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Download artifacts
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: ffmpeg-*
           merge-multiple: true
           path: artifacts
-      - name: Create release
+      - name: Create Release
         id: create_release
         run: |
           set -xe
@@ -307,7 +314,7 @@ jobs:
         run: ./util/update_wiki.sh artifacts ${{ steps.create_release.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-      - name: Prune old releases
+      - name: Prune Old Releases
         run: ./util/prunetags.sh
         env:
           GITHUB_TOKEN: ${{ github.token }}
